@@ -1,11 +1,13 @@
 import { Schema,model } from "mongoose";
-import { NoteProgress } from "../util/note";
+import { NoteProgress,NotePriority } from "../util/note";
 
 // interface
 export interface Note {
   title: string;
   description?: string;
   progress?: NoteProgress;
+  priority?: NotePriority;
+  dueDate?: string;
 }
 
 
@@ -19,6 +21,12 @@ const NoteSchema = new Schema(
       enum: Object.values(NoteProgress),
       default: NoteProgress.NotStarted,
     },
+    priority: {
+      type: String,
+      enum: Object.values(NotePriority),
+      default: NotePriority.low,
+    },
+    dueDate: { type: Date, required: false },
   },
   { timestamps: true },
 );
