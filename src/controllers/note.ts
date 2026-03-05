@@ -1,5 +1,5 @@
-import { Request, RequestHandler, Response } from "express";
-import { Note, NoteModel } from "../models/notes";
+import { RequestHandler } from "express";
+import { NoteModel } from "../models/notes";
 import { NotePriority, NoteProgress } from "../util/note";
 
 interface requestBody {
@@ -9,216 +9,188 @@ interface requestBody {
   priority?: NotePriority;
   dueDate?: Date;
 }
-//create note controller
+
+// Helper to extract visitorId safely
+const getVisitorId = (req: any) => req.headers["visitor-id"] as string || req.query.visitorId as string;
+
+
+
+// 1. Create Note (Already had visitorId, kept for consistency)
 export const createNote: RequestHandler = async (req, res) => {
   try {
-    const { title, description, progress, priority, dueDate }: requestBody =
-      req.body;
+    const visitorId = req.headers["visitor-id"] || req.query.visitorId;
 
-    // 1. Basic Validation
-    if (!title) {
-      return res.status(400).json({ message: "Title is required" });
-    }
 
-    // 2. Create the instance
+    console.log("Visitor ID:", visitorId);
+    if (!visitorId) return res.status(400).json({ error: "No identification provided" });
+
+    const { title, description, progress, priority, dueDate }: requestBody = req.body;
+    if (!title) return res.status(400).json({ message: "Title is required" });
+
     const newNote = new NoteModel({
       title,
       description,
       progress,
       priority,
-      // Mongoose handles ISO strings automatically, no need to manual convert
       dueDate: dueDate ? new Date(dueDate) : undefined,
+      visitorId
     });
 
-    // 3. Save
     await newNote.save();
-
-    res
-      .status(201)
-      .json({ message: "Note created successfully", note: newNote });
+    res.status(201).json({ message: "Note created successfully", note: newNote });
   } catch (error: any) {
-    console.error("POST Error:", error); // This shows in your terminal
     res.status(500).json({ message: error.message || "Internal server error" });
   }
 };
 
-//search note controller
+// 2. Search Note (Filtered by visitorId)
 export const searchNote: RequestHandler = async (req, res) => {
   try {
+       const visitorId = req.headers["visitor-id"] || req.query.visitorId;
+    if (!visitorId) return res.status(400).json({ error: "No identification provided" });
+
     const { title, description } = req.body;
+    const conditions: any[] = [];
 
-    // 1. Build an array of conditions for the $or operator
-    const conditions = [];
+    if (title) conditions.push({ title: { $regex: title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } });
+    if (description) conditions.push({ description: { $regex: description.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } });
 
-    if (title && typeof title === "string") {
-      // Escape special characters to prevent regex injection
-      const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      // Use regex to find if the title CONTAINS the string (case-insensitive)
-      conditions.push({ title: { $regex: escapedTitle, $options: "i" } });
-    }
+    if (conditions.length === 0) return res.status(400).json({ message: "Provide search criteria" });
 
-    if (description && typeof description === "string") {
-      const escapedDescription = description.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      conditions.push({ description: { $regex: escapedDescription, $options: "i" } });
-    }
-
-    // 2. If no search terms provided, you might want to return an error or all notes
-    if (conditions.length === 0) {
-      return res.status(400).json({ message: "Please provide a title or description to search" });
-    }
-
-    // 3. Use the $or operator so it matches EITHER title or description
-    // Also use .find() instead of .findOne() to get all matching results
-    const notes = await NoteModel.find({ $or: conditions });
-
-    if (!notes || notes.length === 0) {
-      return res.status(404).json({ message: "No notes found matching these criteria" });
-    }
+    // IMPORTANT: Use $and to wrap the $or conditions with the visitorId check
+    const notes = await NoteModel.find({
+      visitorId,
+      $or: conditions
+    });
 
     res.status(200).json(notes);
   } catch (error) {
-    console.error("Error finding note:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-//find note by id controller
+// 3. Get Note By ID (Scoped to visitorId)
 export const getNoteById: RequestHandler = async (req, res) => {
   try {
-    //get id from params
+        const visitorId = req.headers["visitor-id"] || req.query.visitorId;
     const { id } = req.params;
-    //find note by id
-    const note = await NoteModel.findById(id);
-    //if note not found
+
+    // We use findOne instead of findById so we can include visitorId in the filter
+    const note = await NoteModel.findOne({ _id: id, visitorId });
+
     if (!note) return res.status(404).json({ message: "Note not found" });
-    //return note
     res.status(200).json(note);
   } catch (error) {
-    //handle error
     res.status(500).json({ message: "Internal server error" });
   }
 };
 
-//get note by priority controller
+// 4. Get Notes By Filter (Scoped to visitorId)
 export const getNotesByFilter: RequestHandler = async (req, res) => {
   try {
-    // 1. Get both from req.query
+      const visitorId = req.headers["visitor-id"] || req.query.visitorId;
+    if (!visitorId) return res.status(400).json({ error: "No identification provided" });
+
     const { priority, progress } = req.query;
+    const filterQuery: any = { visitorId }; // Always include visitorId
 
-    // This allows searching by priority, progress, or BOTH at once
-    const filterQuery: any = {};
+    if (priority) filterQuery.priority = { $regex: new RegExp(`^${priority}$`, "i") };
+    if (progress) filterQuery.progress = { $regex: new RegExp(`^${progress}$`, "i") };
 
-    if (priority) {
-      filterQuery.priority = { $regex: new RegExp(`^${priority}$`, "i") };
-    }
-
-    if (progress) {
-      filterQuery.progress = { $regex: new RegExp(`^${progress}$`, "i") };
-    }
-    if (filterQuery.length <= 0) {
-      const notes = await NoteModel.find();
-      return res.status(200).json(notes);
-    }
-    // 3. Find notes based on the dynamic object
     const notes = await NoteModel.find(filterQuery);
-
-    // 4. Handle empty results
-    if (!notes || notes.length === 0) {
-      return res.status(404).json({
-        message: "No notes found matching these criteria",
-      });
-    }
-
     return res.status(200).json(notes);
   } catch (error: any) {
-    console.error("Filter Notes Error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
-//get Stats
-export const getNoteStatus: RequestHandler = async (req, res) => {
-  try {
-    //find all notes
 
-    const notStarted = await NoteModel.find({ progress: "not-started" });
-    const inProgress = await NoteModel.find({ progress: "in-progress" });
-    const completed = await NoteModel.find({ progress: "completed" });
-
-    res.status(200).json({
-      notStarted,
-      inProgress,
-      completed,
-    });
-  } catch (error) {
-    //handle error
-    res.status(500).json({ message: "Internal server error" });
-  }
-};
-//get all notes controller
+// 5. Get All Notes & Stats (Scoped to visitorId)
 export const getAllNotes: RequestHandler = async (req, res) => {
   try {
-    //find all notes
-    const notes = await NoteModel.find();
-    //get static
+        const visitorId = req.headers["visitor-id"] || req.query.visitorId;
+    if (!visitorId) return res.status(400).json({ error: "No identification provided" });
 
-    const totalNotes = await NoteModel.countDocuments();
-    const notStarted = await NoteModel.countDocuments({
-      progress: "not-started",
-    });
-    const inProgress = await NoteModel.countDocuments({
-      progress: "in-progress",
-    });
-    const completed = await NoteModel.countDocuments({ progress: "completed" });
-    console.log(totalNotes);
+    const filter = { visitorId };
 
-    res.status(200).json({
-      notes,
-      totalNotes,
-      notStarted,
-      inProgress,
-      completed,
-    });
+    const [notes, totalNotes, notStarted, inProgress, completed] = await Promise.all([
+        NoteModel.find(filter),
+        NoteModel.countDocuments(filter),
+        NoteModel.countDocuments({ ...filter, progress: "not-started" }),
+        NoteModel.countDocuments({ ...filter, progress: "in-progress" }),
+        NoteModel.countDocuments({ ...filter, progress: "completed" })
+    ]);
 
-    //return notes
-    res.status(200).json(notes);
+    res.status(200).json({ notes, totalNotes, notStarted, inProgress, completed });
   } catch (error) {
-    //handle error
     res.status(500).json({ message: "Internal server error" });
   }
 };
 
-//update note by id controller
+// 6. Update Note By ID (Scoped to visitorId)
 export const updateNoteById: RequestHandler = async (req, res) => {
   try {
+       const visitorId = req.headers["visitor-id"] || req.query.visitorId;
     const { id } = req.params;
 
-    // Find and update - req.body is the object containing changes
-    const note = await NoteModel.findByIdAndUpdate(id, req.body, {
-      new: true, // Returns the updated document
-      runValidators: true, // Ensures the update follows your Schema rules
-    });
+    // Use findOneAndUpdate to ensure the note belongs to the visitor
+    const note = await NoteModel.findOneAndUpdate(
+      { _id: id, visitorId },
+      req.body,
+      { new: true, runValidators: true }
+    );
 
-    if (!note) return res.status(404).json({ message: "Note not found" });
-
+    if (!note) return res.status(404).json({ message: "Note not found or unauthorized" });
     res.status(200).json({ message: "Updated successfully", note });
   } catch (error) {
     res.status(500).json({ message: "Update failed" });
   }
 };
 
-//delete note by id controller
+// get Stats by visitorId
+export const getNoteStatus: RequestHandler = async (req, res) => {
+  try {
+    // 1. Get visitorId from headers or query
+        const visitorId = req.headers["visitor-id"] || req.query.visitorId;
+
+    if (!visitorId) {
+      return res.status(400).json({ error: "No identification provided" });
+    }
+
+    // 2. Define the filter to ensure we only look at THIS visitor's notes
+    const filter = { visitorId };
+
+    // 3. Run counts in parallel for better performance
+    const [notStarted, inProgress, completed] = await Promise.all([
+      NoteModel.countDocuments({ ...filter, progress: "not-started" }),
+      NoteModel.countDocuments({ ...filter, progress: "in-progress" }),
+      NoteModel.countDocuments({ ...filter, progress: "completed" }),
+    ]);
+
+    // 4. Return the stats
+    res.status(200).json({
+      notStarted,
+      inProgress,
+      completed,
+      total: notStarted + inProgress + completed
+    });
+
+  } catch (error) {
+    console.error("Get Status Error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// 7. Delete Note By ID (Scoped to visitorId)
 export const deleteNoteById: RequestHandler = async (req, res) => {
   try {
-    //get id from params
+        const visitorId = req.headers["visitor-id"] || req.query.visitorId;
     const { id } = req.params;
-    //find and delete note
-    const note = await NoteModel.findByIdAndDelete(id);
-    //if note not found
-    if (!note) return res.status(404).json({ message: "Note not found" });
-    //return success message
+
+    const note = await NoteModel.findOneAndDelete({ _id: id, visitorId });
+
+    if (!note) return res.status(404).json({ message: "Note not found or unauthorized" });
     res.status(200).json({ message: "Note deleted successfully" });
   } catch (error) {
-    //handle error
     res.status(500).json({ message: "Internal server error" });
   }
 };

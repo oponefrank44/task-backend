@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build": "tsc",
     "dev": "tsnd --respawn --pretty  --transpile-only ./src/index.ts",
     "test": "jest"
   },
@@ -11,8 +12,10 @@
   "license": "ISC",
   "dependencies": {
     "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "helmet": "^8.1.0"
+    "helmet": "^8.1.0",
+    "mongodb": "^7.1.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

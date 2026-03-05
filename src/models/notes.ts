@@ -27,6 +27,7 @@ const NoteSchema = new Schema(
       default: NotePriority.low,
     },
     dueDate: { type: Date, required: false },
+    visitorId: { type: String, required: true, index: true },
   },
   { timestamps: true },
 );

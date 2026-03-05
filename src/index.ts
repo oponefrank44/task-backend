@@ -3,7 +3,8 @@ import "./db";
 import helmet from "helmet";
 import cors from "cors";
 import noteRouter from "./routers/note";
-const PORT = 8000;
+import 'dotenv/config';
+const PORT = process.env.PORT || 8000;
 const app = express();
 
 app.use(helmet());
