@@ -120,5 +120,4 @@ jest-coverage/
 # Optional configuration
 .eslintrc.js
 .prettierrc.js
-tsconfig.json
 tsconfig.tsbuildinfo
